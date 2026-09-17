@@ -883,3 +883,36 @@ class TestConversationStartedTwoLine:
         vol = self._volatile(agent)
         assert "Conversation started:" not in vol
         assert "as of the last context rebuild" not in vol
+
+
+def test_todo_list_guidance_gated_on_tool_presence():
+    """TODO_LIST_GUIDANCE only appears when todo_list is actually in the
+    model's tool list — never advertise a tool the toolset config disabled."""
+    from agent.system_prompt import _guidance_parts
+
+    with_todo = _make_agent(
+        valid_tool_names=["read_file", "todo_list"],
+        _parallel_tool_call_guidance=False,
+    )
+    without_todo = _make_agent(
+        valid_tool_names=["read_file"],
+        _parallel_tool_call_guidance=False,
+    )
+
+    # _tool_guidance_block may contribute a None entry (dropped later by
+    # _join_tier, not here) — filter it before substring-checking parts.
+    assert any("Tracking multi-step work" in p for p in _guidance_parts(with_todo) if p)
+    assert not any("Tracking multi-step work" in p for p in _guidance_parts(without_todo) if p)
+
+
+def test_todo_list_guidance_respects_config_flag():
+    """agent.todo_list_guidance: false must suppress the nudge even when
+    todo_list is available, same opt-out shape as the other guidance flags."""
+    from agent.system_prompt import _guidance_parts
+
+    agent = _make_agent(
+        valid_tool_names=["read_file", "todo_list"],
+        _parallel_tool_call_guidance=False,
+        _todo_list_guidance=False,
+    )
+    assert not any("Tracking multi-step work" in p for p in _guidance_parts(agent) if p)

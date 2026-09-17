@@ -415,6 +415,17 @@ PARALLEL_TOOL_CALL_GUIDANCE = (
     "read a file before you can patch it). When in doubt and the calls are independent, batch them."
 )
 
+# The todo_list tool exists and is available by default but nothing in the prompt told the model
+# to use it, so multi-step work went untracked far more often than it should. Short and tight,
+# same rationale as PARALLEL_TOOL_CALL_GUIDANCE above: shipped in the cached system prompt, gated
+# on todo_list actually being in the model's tool list (see system_prompt.py's _guidance_parts).
+TODO_LIST_GUIDANCE = (
+    "# Tracking multi-step work\n"
+    "For any task with more than two or three distinct steps, use todo_list to record the steps before "
+    "starting and check them off as you complete each one. This keeps you from losing track of what's left, "
+    "forgetting a step, or declaring the task done early. Skip it for single-step or trivial requests."
+)
+
 # Execution-discipline guidance for models that abandon partial results, skip prerequisite lookups, answer
 # from memory, or declare "done" unverified. Body is family-agnostic (OPENAI_ prefix reflects origin).
 # Injection gate: system_prompt.py via config.yaml ``agent.execution_guidance`` (auto/true/false/list).

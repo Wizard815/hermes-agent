@@ -10,8 +10,10 @@ mimic and inflated context 3-4x across the retry budget.
 
 The fix: a blank/whitespace-only tool name gets a terse anti-priming error that
 tells the model in-context tool-call syntax is DATA, with NO catalog dump. A
-genuinely-wrong-but-nonempty name (an actual typo) still gets the full catalog
-so the model can self-correct.
+genuinely-wrong-but-nonempty name (an actual typo) gets up to 3 fuzzy-matched
+near-miss suggestions (not the full catalog — an uncapped catalog dump on every
+wrong-name call is its own priming/context-bloat risk) plus a pointer to
+tool_search when nothing matches closely.
 
 These assert the *behavior contract* of the dispatch branch (what content goes
 back to the model for each name shape), exercised end-to-end through
@@ -197,6 +199,23 @@ def test_empty_tool_name_gets_terse_error_no_catalog(agent_env, blank):
     # The whole point: do not feed the priming loop the catalog of names.
     assert "Available tools:" not in joined
 
+
+def test_nonempty_wrong_name_gets_capped_suggestions_not_full_catalog():
+    """A nonempty-but-wrong tool name must not dump the whole (potentially
+    100+ entry) tool catalog into context — that's its own priming/context-bloat
+    risk, the same class of problem the blank-name fix above addresses."""
+    from agent.conversation_loop import _invalid_tool_name_error_content
+
+    valid_names = {f"tool_{i}" for i in range(150)} | {"read_file", "read_files", "todo_list"}
+
+    close = _invalid_tool_name_error_content("read_fil", valid_names)
+    assert "read_file" in close
+    assert close.count(",") <= 2  # at most 3 suggestions
+    assert "Available tools:" not in close
+
+    no_match = _invalid_tool_name_error_content("xyzzy_totally_unrelated", valid_names)
+    assert "tool_search" in no_match
+    assert "Available tools:" not in no_match
 
 
 

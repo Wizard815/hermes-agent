@@ -23,7 +23,7 @@ from agent.prompt_builder import (
     HERMES_AGENT_HELP_GUIDANCE, HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS, KANBAN_GUIDANCE,
     PARALLEL_TOOL_CALL_GUIDANCE, PLATFORM_HINTS, SESSION_SEARCH_GUIDANCE,
     SKILLS_GUIDANCE, STEER_CHANNEL_NOTE, TASK_COMPLETION_GUIDANCE, TELEGRAM_RICH_MESSAGES_HINT,
-    TOOL_USE_ENFORCEMENT_GUIDANCE, TOOL_USE_ENFORCEMENT_MODELS, drain_truncation_warnings,
+    TODO_LIST_GUIDANCE, TOOL_USE_ENFORCEMENT_GUIDANCE, TOOL_USE_ENFORCEMENT_MODELS, drain_truncation_warnings,
 )
 from agent import prompt_builder as _pb
 from agent.runtime_cwd import resolve_context_cwd
@@ -563,6 +563,8 @@ def _guidance_parts(agent: Any) -> List[str]:
         return parts
     # Steering only lands inside tool results, so only reachable with tools.
     parts.append(STEER_CHANNEL_NOTE)
+    if "todo_list" in agent.valid_tool_names and getattr(agent, "_todo_list_guidance", True):
+        parts.append(TODO_LIST_GUIDANCE)
     # agent.tool_use_enforcement / agent.execution_guidance: "auto" (default)
     # matches the hardcoded model lists; true/false force; a list gives custom
     # model-name substrings.  Execution guidance is an independent gate so
