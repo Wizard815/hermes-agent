@@ -396,7 +396,10 @@ class ToolCallGuardrailController:
             ):
                 return self._decide("halt", "same_tool_failure_halt", tool_name, same_count, signature)
             if warnings and exact_count >= self.config.exact_failure_warn_after:
-                return self._decide("warn", "repeated_exact_failure_warning", tool_name, exact_count, signature)
+                return self._decide(
+                    "warn", "repeated_exact_failure_warning", tool_name, exact_count, signature,
+                    message=_tool_failure_recovery_hint(tool_name, exact_count),
+                )
             if warnings and same_count >= self.config.same_tool_failure_warn_after:
                 return self._decide(
                     "warn", "same_tool_failure_warning", tool_name, same_count, signature,

@@ -116,6 +116,25 @@ def test_default_repeated_identical_failed_call_warns_without_blocking():
     assert controller.halt_decision is None
 
 
+def test_repeated_exact_failure_warning_gets_tool_specific_recovery_hint():
+    """repeated_exact_failure_warning (identical args replayed) must carry the same
+    actionable, tool-specific guidance same_tool_failure_warning already gets via
+    _tool_failure_recovery_hint — not the generic static template. Concretely: a
+    terminal command retried unchanged should be told to try pwd/ls, an absolute
+    path, or a different tool, not just "change strategy" with no specifics."""
+    controller = ToolCallGuardrailController()
+    args = {"command": "npm start"}
+
+    for _ in range(3):
+        controller.before_call("terminal", args)
+        decision = controller.after_call("terminal", args, "Command timed out", failed=True)
+
+    assert decision.code == "repeated_exact_failure_warning"
+    assert decision.action == "warn"
+    assert "pwd && ls -la" in decision.message
+    assert "different tool" in decision.message
+
+
 def test_hard_stop_enabled_blocks_repeated_exact_failure_before_next_execution():
     controller = ToolCallGuardrailController(
         ToolCallGuardrailConfig(
