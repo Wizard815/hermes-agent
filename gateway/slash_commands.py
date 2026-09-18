@@ -907,21 +907,6 @@ class GatewaySlashCommandsMixin(
         enable_session_yolo(session_key)
         return EphemeralReply(t("gateway.yolo.enabled"))
 
-    async def _handle_plan_mode_command(self, event: MessageEvent) -> Union[str, EphemeralReply]:
-        """Handle /plan-mode — toggle code-level plan-mode enforcement for this session only.
-
-        Distinct from /plan (agent/plan_prompt.py's one-turn planning prompt): this is a
-        persistent session toggle, same shape as /yolo but the opposite direction — while
-        active, only read_file/search_files run; every other tool call is rejected before
-        it reaches the registry (tools/plan_mode_guard.py), not just discouraged by a prompt."""
-        from tools.plan_mode_guard import disable_session_plan_mode, enable_session_plan_mode, is_session_plan_mode_enabled
-        session_key = self._session_key_for_source(event.source)
-        if is_session_plan_mode_enabled(session_key):
-            disable_session_plan_mode(session_key)
-            return EphemeralReply(t("gateway.plan_mode.disabled"))
-        enable_session_plan_mode(session_key)
-        return EphemeralReply(t("gateway.plan_mode.enabled"))
-
     async def _handle_verbose_command(self, event: MessageEvent) -> str:
         """Handle /verbose — cycle tool progress display mode (off → new → all → verbose → log) per
         *current platform*, saved to ``display.platforms.<platform>.tool_progress``. Gated by

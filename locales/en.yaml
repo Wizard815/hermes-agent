@@ -468,10 +468,6 @@ gateway:
     disabled:                   "⚠️ YOLO mode **OFF** for this session — dangerous commands will require approval."
     enabled:                    "⚡ YOLO mode **ON** for this session — all commands auto-approved. Use with caution."
 
-  plan_mode:
-    disabled:                   "📝 Plan mode **OFF** for this session — tools work normally again."
-    enabled:                    "📝 Plan mode **ON** for this session — only read_file and search_files will run; every other tool call is rejected until you turn this off with /plan-mode again."
-
   shared:
     session_db_unavailable:      "Session database not available."
     session_db_unavailable_prefix: "Session database not available"
