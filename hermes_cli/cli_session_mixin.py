@@ -916,6 +916,41 @@ class CLISessionMixin:
                 f"  ⚡ YOLO mode {_Colors.BOLD}{_Colors.GREEN}ON{_Colors.RESET}"
                 " — all commands auto-approved. Use with caution.")
 
+    def _handle_plan_mode_command(self, _cmd_original: str = ""):
+        """Toggle per-session plan mode (only read_file/search_files run).
+
+        Named for cli.py's naming-convention auto-resolve
+        (_handle_<name>_command, "-" -> "_") rather than added to
+        _SLASH_DISPATCH: that table's explicit entries are reserved for
+        commands that predate the dispatch-table refactor (see
+        tests/hermes_cli/test_slash_dispatch_table.py's OLD_CHAIN_COMMANDS,
+        a frozen historical list) - a genuinely new command should resolve
+        via the convention instead of growing that list.
+
+        Mirrors _toggle_yolo above and the gateway /plan-mode handler
+        (gateway/slash_commands.py). No frozen/env-var equivalent to YOLO's
+        --yolo flag, and no DB persistence across --resume yet (in-memory
+        only, same limitation _toggle_yolo would have without
+        _persist_session_yolo) - acceptable for a mode meant to be toggled
+        for the current stretch of work, not a standing security posture.
+        """
+        from cli import _cprint
+        from hermes_cli.colors import Colors as _Colors
+        from tools.plan_mode_guard import disable_session_plan_mode, enable_session_plan_mode, is_session_plan_mode_enabled
+
+        session_key = self.session_id or "default"
+        if is_session_plan_mode_enabled(session_key):
+            disable_session_plan_mode(session_key)
+            _cprint(
+                f"  📝 Plan mode {_Colors.BOLD}{_Colors.RED}OFF{_Colors.RESET}"
+                " — tools work normally again.")
+        else:
+            enable_session_plan_mode(session_key)
+            _cprint(
+                f"  📝 Plan mode {_Colors.BOLD}{_Colors.GREEN}ON{_Colors.RESET}"
+                " — only read_file and search_files will run; every other tool call is rejected"
+                " until you toggle this off with /plan-mode again.")
+
     def _persist_session_yolo(self, session_key: str, enabled: bool) -> None:
         """Persist the YOLO flag to the session row so --resume restores it. Best-effort; the
         in-memory toggle is authoritative. Skipped without a store or before the row exists

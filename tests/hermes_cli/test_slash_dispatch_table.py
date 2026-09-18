@@ -49,7 +49,10 @@ def test_registry_names_resolve_into_the_table():
     # registry commands the CLI never handled inline must still fall through
     dispatched = {c.name for c in COMMAND_REGISTRY if HermesCLI._slash_handler(c.name)}
     # /login has no old branch; it resolves through the naming-convention fallback.
-    assert dispatched == set(OLD_CHAIN_COMMANDS) - {"exit"} | {"quit", "login"}
+    # /plan-mode is a genuinely new command (not part of the historical parity
+    # set this test guards) added the same way: _handle_plan_mode_command,
+    # resolved via the naming convention, no manual _SLASH_DISPATCH entry.
+    assert dispatched == set(OLD_CHAIN_COMMANDS) - {"exit"} | {"quit", "login", "plan-mode"}
 
 
 def _cli():
