@@ -781,6 +781,17 @@ def _pre_dispatch_guards(function_name: str, function_args: Dict[str, Any], skip
         if block_message is not None:
             return function_args, (tool_error(block_message), "plugin_block", block_message)
 
+    # Plan mode: session-scoped, code-level enforcement (not just the /plan
+    # prompt asking the model nicely). Checked before ACP edit approval since
+    # a plan-mode session should never reach that ACP-specific gate at all.
+    try:
+        from tools.plan_mode_guard import maybe_block_for_plan_mode
+        plan_block_message = maybe_block_for_plan_mode(function_name, function_args, ids.session_id)
+        if plan_block_message is not None:
+            return function_args, (plan_block_message, "plan_mode_blocked", None)
+    except Exception as _plan_mode_err:
+        logger.debug("plan mode guard error: %s", _plan_mode_err)
+
     # ACP/Zed edit approval before any file mutation. The requester is bound
     # via ContextVar only for ACP sessions, so CLI/gateway paths are unaffected.
     try:

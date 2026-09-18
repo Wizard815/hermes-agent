@@ -219,6 +219,55 @@ class TestHandleFunctionCall:
         assert post_call[1]["status"] == "blocked"
         assert post_call[1]["error_type"] == "edit_approval_denied"
 
+    def test_plan_mode_blocks_mutating_tool_without_dispatching(self, monkeypatch):
+        from tools.plan_mode_guard import disable_session_plan_mode, enable_session_plan_mode
+
+        monkeypatch.setattr("hermes_cli.plugins.invoke_hook", lambda *_args, **_kwargs: [])
+        monkeypatch.setattr(
+            "model_tools.registry.dispatch",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("plan-mode-blocked call must not dispatch")
+            ),
+        )
+        enable_session_plan_mode("session-plan-1")
+        try:
+            result = json.loads(
+                handle_function_call(
+                    "write_file",
+                    {"path": "x.txt", "content": "y"},
+                    task_id="task-1",
+                    session_id="session-plan-1",
+                    tool_call_id="tool-1",
+                )
+            )
+            assert "Plan mode is active" in result["error"]
+        finally:
+            disable_session_plan_mode("session-plan-1")
+
+    def test_plan_mode_allows_read_only_tools_and_other_sessions(self, monkeypatch):
+        from tools.plan_mode_guard import disable_session_plan_mode, enable_session_plan_mode
+
+        monkeypatch.setattr("hermes_cli.plugins.invoke_hook", lambda *_args, **_kwargs: [])
+        dispatched = []
+        monkeypatch.setattr(
+            "model_tools.registry.dispatch",
+            lambda name, args, **_kwargs: dispatched.append(name) or "{}",
+        )
+        enable_session_plan_mode("session-plan-2")
+        try:
+            handle_function_call(
+                "read_file", {"path": "x.txt"},
+                task_id="task-1", session_id="session-plan-2", tool_call_id="tool-1",
+            )
+            # A different session with plan mode never enabled is unaffected.
+            handle_function_call(
+                "write_file", {"path": "x.txt", "content": "y"},
+                task_id="task-1", session_id="session-other", tool_call_id="tool-2",
+            )
+        finally:
+            disable_session_plan_mode("session-plan-2")
+        assert dispatched == ["read_file", "write_file"]
+
 
 # =========================================================================
 # Agent loop tools
