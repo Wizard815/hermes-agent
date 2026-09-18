@@ -182,8 +182,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
                busy_policy="dispatch", desktop="terminal"),
     CommandDef("yolo", "Toggle YOLO mode (skip all dangerous command approvals)",
                "Configuration", busy_policy="dispatch"),
-    CommandDef("plan-mode", "Toggle plan mode (only read_file/search_files run; every other tool call is rejected)",
-               "Configuration", busy_policy="dispatch"),
     CommandDef("approvals", "Show or set the persistent dangerous-command approval mode",
                "Configuration", args_hint="[manual|smart|off]",
                subcommands=("manual", "smart", "off")),
