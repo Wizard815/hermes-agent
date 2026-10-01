@@ -67,7 +67,12 @@ def get_cached_entry(server_name: str, fingerprint: str) -> Optional[dict]:
         return None
     ttl_ms = entry.get("ttl_ms")
     written_at = entry.get("written_at")
-    expired = (isinstance(ttl_ms, (int, float)) and isinstance(written_at, (int, float))
+    # A non-positive TTL means "no TTL hint", not "expire immediately". The MCP
+    # SDK reports `ttlMs=0` when a server omits the SEP-2549 hint, and treating
+    # that as a real deadline makes every entry permanently stale -- which
+    # silently disables lazy schema-cache registration for every server.
+    expired = (isinstance(ttl_ms, (int, float)) and ttl_ms > 0
+               and isinstance(written_at, (int, float))
                and (time.time() - written_at) * 1000.0 >= float(ttl_ms))
     return None if expired else entry
 

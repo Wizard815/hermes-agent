@@ -18,6 +18,20 @@ def test_entry_without_ttl_never_expires():
     assert sc.get_cached_entry("srv", "fp") is not None
 
 
+def test_zero_ttl_means_no_hint_not_expired(monkeypatch):
+    """The MCP SDK reports ttlMs=0 when a server omits the SEP-2549 hint.
+
+    read back as 0 that must mean "no TTL" (like a missing hint), not "expire
+    immediately" -- otherwise every entry is permanently stale and lazy
+    registration never fires for any server.
+    """
+    sc.write_cache_entry("srv", "fp", tools=[{"name": "t"}], ttl_ms=0)
+    time.sleep(0.01)
+    entry = sc.get_cached_entry("srv", "fp")
+    assert entry is not None
+    assert [t["name"] for t in entry["tools"]] == ["t"]
+
+
 def test_entry_within_ttl_served():
     sc.write_cache_entry("srv", "fp", tools=[{"name": "t"}], ttl_ms=60_000)
     entry = sc.get_cached_entry("srv", "fp")
