@@ -38,6 +38,15 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# Imported at module scope on purpose. Importing agent.* runs
+# `hermes_bootstrap.activate_dependencies()`, which derives its root from
+# `hermes_bootstrap.__file__` and stats `<root>/manifest.json` — when the agent
+# is installed inside the Hermes home (e.g. ~/.hermes/hermes-agent) that path IS
+# the operator's real ~/.hermes, and the autouse home-IO guard fails any test
+# that touches it. Collection happens before the guard is armed, so importing
+# here keeps the assertion below about the error content, not about layout.
+from agent.conversation_loop import _invalid_tool_name_error_content  # noqa: E402
+
 
 class _MockHandler(BaseHTTPRequestHandler):
     # Set by the fixture before each request cycle.
@@ -204,8 +213,6 @@ def test_nonempty_wrong_name_gets_capped_suggestions_not_full_catalog():
     """A nonempty-but-wrong tool name must not dump the whole (potentially
     100+ entry) tool catalog into context — that's its own priming/context-bloat
     risk, the same class of problem the blank-name fix above addresses."""
-    from agent.conversation_loop import _invalid_tool_name_error_content
-
     valid_names = {f"tool_{i}" for i in range(150)} | {"read_file", "read_files", "todo_list"}
 
     close = _invalid_tool_name_error_content("read_fil", valid_names)
