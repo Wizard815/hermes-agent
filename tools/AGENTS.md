@@ -15,7 +15,10 @@ manual import list. A tool that is a whole package (`tools/connectors/`) registe
 is a library by construction, and the package needs an `__init__.py` or discovery skips it with a
 warning (setuptools would drop it from the wheel). The registry handles schema collection, dispatch (`handle_function_call()`),
 availability (`check_fn`, TTL-cached process-wide), and error wrapping. **All handlers return a JSON
-string.**
+string**, except a tool that hands the model pixels: it may return the multimodal envelope
+`{"_multimodal": True, "content": [text, image_url…], "text_summary": str}` (`registry._normalize_handler_result`
+accepts exactly that shape). Its image path goes through `vision_tools._native_tool_result_images` — never a
+private vision check.
 
 ## Adding a core tool (2 files) — only when the user is explicitly contributing a core tool
 
@@ -68,7 +71,7 @@ Rules for tool code:
 
 Single `TOOLSETS` dict. Keys today: `browser, clarify, code_execution, cronjob, debugging,
 delegation, discord, discord_admin, feishu_doc, feishu_drive, file, image_gen,
-kanban, memory, messaging, moa, rl, safe, search, session_search, skills, spotify, terminal, todo,
+kanban, memory, messaging, moa, rl, safe, search, session_search, skills, terminal, todo,
 tts, video, vision, web, yuanbao` (don't assert the list in tests). Per-platform enable/disable via
 `hermes tools` (curses) or `tools.<platform>.enabled/disabled` in config.yaml. `browser_exec`
 replaces the other browser tools when `browser.backend` is `browser-use`.
@@ -76,7 +79,7 @@ replaces the other browser tools when `browser.backend` is `browser-use`.
 ## Backends and providers inside tools/
 
 Several tools front pluggable backends: terminal environments in `tools/environments/` (local,
-docker, ssh, modal, daytona, singularity; `terminal_tool_backends.py`, `tool_backend_helpers.py`),
+docker, ssh, modal, daytona; `terminal_tool_backends.py`, `tool_backend_helpers.py`),
 browser (`browser_tool_*.py`: cdp, cloud, install, lifecycle, session, real_profile, vision), MCP
 client (`mcp_tool_*.py`: config, discovery, transport, registration, content, errors), TTS
 (`tts_tool_providers.py`, `tts_command_provider.py`), skills hub sources (`skills_hub_official.py`
