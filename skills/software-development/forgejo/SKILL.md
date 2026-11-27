@@ -118,6 +118,8 @@ the environment only. Never put the token on a command line or in a remote URL.
    Pass `--image` to run in a specific container image. A job that stays
    `waiting` means no idle runner has that label. GitHub-only repos run once
    they are mirrored onto the forge: `mirror sync` first.
+   For a quick throwaway Linux box on the Hermes machine itself (no GPU, any
+   distro), Hermes Studio's `ekko_studio_use_sandbox` tool is faster than a job.
 8. **Pushed to GitHub, CI on the forge.** When a GitHub repo is pull-mirrored
    onto the forge, run `mirror sync OWNER/REPO` after pushing so the forge's
    runners see the commit now instead of at the next 8-hour sync.

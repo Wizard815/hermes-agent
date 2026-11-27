@@ -95,7 +95,7 @@ def api_text(url: str, path: str, timeout: float = 30) -> str:
 
 
 def split_repo(full: str) -> tuple[str, str]:
-    m = re.fullmatch(r"([\w.-]+)/([\w.-]+?)(?:\.git)?", full or "")
+    m = re.fullmatch(r"(\w[\w.-]*)/(\w[\w.-]*?)(?:\.git)?", full or "")
     if not m:
         raise ForgeError(f"expected OWNER/REPO, got {full!r}")
     return m.group(1), m.group(2)
