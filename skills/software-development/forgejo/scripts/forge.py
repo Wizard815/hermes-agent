@@ -19,12 +19,17 @@ and process lists). Output is JSON on stdout; errors go to stderr with exit 1.
     forge.py mirror pull https://github.com/O/R [--name N] [--public]
     forge.py mirror list OWNER/REPO
     forge.py mirror sync OWNER/REPO
+    forge.py job setup [--jobs-repo OWNER/hermes-jobs]       # once: the repo jobs run from
+    forge.py job run --runner LABEL [--image IMG] [--repo OWNER/REPO] [--ref REF] [--wait] -- COMMAND
+    forge.py job status RUN_ID [--logs N]
+    forge.py runners                   # runner names and labels the token can see
     forge.py where REMOTE_URL          # "forge", "github" or "other"
     forge.py git -- push origin main   # any git command, with the token for the forge only
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -76,6 +81,17 @@ def api(url: str, method: str, path: str, body: dict | None = None, ok404: bool 
         raise ForgeError(f"forge {e.code} on {method} {path}: {msg or e.reason}")
     except urllib.error.URLError as e:
         raise ForgeError(f"can't reach the forge at {url}: {e.reason}. Is it running, and is the address right?")
+
+
+def api_text(url: str, path: str, timeout: float = 30) -> str:
+    req = urllib.request.Request(f"{url}/api/v1{path}", headers={"Authorization": f"token {token()}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raise ForgeError(f"forge {e.code} on GET {path}: {e.reason}")
+    except urllib.error.URLError as e:
+        raise ForgeError(f"can't reach the forge at {url}: {e.reason}")
 
 
 def split_repo(full: str) -> tuple[str, str]:
@@ -230,6 +246,118 @@ def cmd_mirror(a):
     return {"ok": True, "from": f"{owner}/{repo}", "to": address}
 
 
+# ---------------------------------------------------------------- jobs on the forge's runners
+JOB_WORKFLOW = ".forgejo/workflows/hermes-job.yml"
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates", "hermes-job.yml")
+DONE = {"success", "failure", "cancelled", "skipped"}
+
+
+def jobs_repo(a) -> tuple[str, str]:
+    if a.jobs_repo:
+        return split_repo(a.jobs_repo)
+    return api(a.url, "GET", "/user")["login"], "hermes-jobs"
+
+
+def cmd_job_setup(a):
+    owner, name = jobs_repo(a)
+    if api(a.url, "GET", f"/repos/{owner}/{name}", ok404=True) is None:
+        me = api(a.url, "GET", "/user")["login"]
+        path = "/user/repos" if owner == me else f"/orgs/{quote(owner)}/repos"
+        api(a.url, "POST", path, {"name": name, "private": True, "auto_init": True,
+                                  "description": "Jobs Hermes runs on the forge's runners (forge.py job)"})
+    with open(TEMPLATE, encoding="utf-8") as f:
+        wanted = f.read()
+    cur = api(a.url, "GET", f"/repos/{owner}/{name}/contents/{JOB_WORKFLOW}", ok404=True)
+    content = base64.b64encode(wanted.encode()).decode()
+    if cur is None:
+        api(a.url, "POST", f"/repos/{owner}/{name}/contents/{JOB_WORKFLOW}", {"content": content, "message": "hermes job workflow"})
+        workflow = "created"
+    elif base64.b64decode(cur.get("content") or "").decode("utf-8", "replace") != wanted:
+        api(a.url, "PUT", f"/repos/{owner}/{name}/contents/{JOB_WORKFLOW}",
+            {"content": content, "sha": cur["sha"], "message": "update hermes job workflow"})
+        workflow = "updated"
+    else:
+        workflow = "unchanged"
+    # Jobs check out other forge repos with JOBS_TOKEN: a read-only token is best.
+    read_token = os.environ.get("FORGE_JOBS_TOKEN", "").strip() or token()
+    api(a.url, "PUT", f"/repos/{owner}/{name}/actions/secrets/JOBS_TOKEN", {"data": read_token})
+    return {"jobs_repo": f"{owner}/{name}", "workflow": workflow,
+            "checkout_token": "FORGE_JOBS_TOKEN" if os.environ.get("FORGE_JOBS_TOKEN", "").strip() else "FORGE_TOKEN"}
+
+
+def _job_view(a, owner, name, run_id, logs: int = 0):
+    run = api(a.url, "GET", f"/repos/{owner}/{name}/actions/runs/{int(run_id)}")
+    jobs = api(a.url, "GET", f"/repos/{owner}/{name}/actions/runs/{int(run_id)}/jobs") or []
+    ran = [j for j in jobs if j.get("status") != "skipped"] or jobs
+    out = {"run": int(run_id), "status": run.get("status"), "title": run.get("title"), "url": run.get("html_url"),
+           "jobs": [{"name": j.get("name"), "status": j.get("status"), "runs_on": j.get("runs_on")} for j in ran]}
+    if logs and ran and ran[0].get("status") in DONE:
+        text = api_text(a.url, f"/repos/{owner}/{name}/actions/jobs/{int(ran[0]['id'])}/logs")
+        out["output"] = job_output(text, logs).replace(token(), "****")
+    return out
+
+
+_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
+
+
+def job_output(log: str, limit: int) -> str:
+    """The command's own lines (after the workflow's marker), without timestamps; the log tail if no marker."""
+    lines = [_STAMP.sub("", line) for line in log.rstrip().splitlines()]
+    if "=== hermes job output ===" in lines:
+        lines = lines[lines.index("=== hermes job output ===") + 1:]
+        end = next((i for i, line in enumerate(lines) if line.startswith(("⭐ Run Post", "🏁"))), len(lines))
+        lines = lines[:end]
+    return "\n".join(lines[-limit:])
+
+
+def cmd_job_run(a):
+    owner, name = jobs_repo(a)
+    command = " ".join(a.command).strip()
+    if not command:
+        raise ForgeError("usage: forge.py job run --runner LABEL -- COMMAND")
+    if a.repo:
+        split_repo(a.repo)
+    inputs = {"runner": a.runner, "image": a.image or "", "repo": a.repo or "", "ref": a.ref or "",
+              "command": command, "title": (a.title or command)[:120]}
+    try:
+        run = api(a.url, "POST", f"/repos/{owner}/{name}/actions/workflows/hermes-job.yml/dispatches",
+                  {"ref": "main", "inputs": inputs, "return_run_info": True})
+    except ForgeError as e:
+        if " 404 " in str(e):
+            raise ForgeError(f"no job workflow in {owner}/{name}: run `forge.py job setup` once") from None
+        raise
+    if not a.wait:
+        return _job_view(a, owner, name, run["id"])
+    deadline = time.time() + a.timeout
+    while True:
+        view = _job_view(a, owner, name, run["id"], logs=a.logs)
+        if view["status"] in DONE:
+            return view
+        if time.time() > deadline:
+            view["note"] = f"still {view['status']} after {a.timeout}s; check again with `job status {run['id']}`"
+            if view["status"] == "waiting":
+                view["note"] += f". Waiting means no idle runner has the label {a.runner!r}"
+            return view
+        time.sleep(5)
+
+
+def cmd_job_status(a):
+    owner, name = jobs_repo(a)
+    return _job_view(a, owner, name, a.run_id, logs=a.logs)
+
+
+def cmd_runners(a):
+    for path in ("/admin/actions/runners", "/user/actions/runners"):
+        try:
+            data = api(a.url, "GET", path)
+        except ForgeError:
+            continue
+        items = data if isinstance(data, list) else data.get("runners") or data.get("entries") or []
+        return [{"name": r.get("name"), "labels": [lb.get("name") if isinstance(lb, dict) else lb for lb in r.get("labels") or []],
+                 "status": r.get("status")} for r in items]
+    raise ForgeError("the token can't list runners (needs an admin token); ask the user which labels exist, e.g. ubuntu-latest and gpu")
+
+
 def cmd_where(a):
     try:
         url = base_url(a.url)
@@ -294,6 +422,21 @@ def parser() -> argparse.ArgumentParser:
     m.add_argument("--public", action="store_true")
     m.add_argument("--interval", default="8h")
 
+    j = sub.add_parser("job")
+    j.add_argument("action", choices=["setup", "run", "status"])
+    j.add_argument("run_id", nargs="?", help="run id for status")
+    j.add_argument("--jobs-repo", help="OWNER/REPO jobs run from (default: YOU/hermes-jobs, or skills.config.forgejo.jobs_repo)")
+    j.add_argument("--runner", default="ubuntu-latest", help="runner label: ubuntu-latest, gpu, ...")
+    j.add_argument("--image", help="container image for the job; default: the runner label's own")
+    j.add_argument("--repo", help="OWNER/REPO on the forge to check out first")
+    j.add_argument("--ref", help="branch, tag or commit of --repo")
+    j.add_argument("--title")
+    j.add_argument("--wait", action="store_true", help="wait until it finishes and print the log tail")
+    j.add_argument("--timeout", type=int, default=1800, help="seconds --wait waits")
+    j.add_argument("--logs", type=int, default=60, help="log lines to show when done")
+
+    sub.add_parser("runners")
+
     w = sub.add_parser("where")
     w.add_argument("remote")
 
@@ -304,7 +447,14 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command: list[str] = []
+    if "job" in argv and "--" in argv:  # job run ... -- COMMAND: everything after -- is the command
+        cut = argv.index("--")
+        argv, command = argv[:cut], argv[cut + 1:]
     a = parser().parse_args(argv)
+    if a.cmd == "job":
+        a.command = command
     try:
         if a.cmd != "where":
             a.url = base_url(a.url)
@@ -316,8 +466,16 @@ def main(argv: list[str] | None = None) -> int:
             raise ForgeError(f"pr {a.action} needs a NUMBER")
         if a.cmd == "issue" and a.action == "create" and not a.title:
             raise ForgeError("issue create needs --title")
-        result = {"whoami": cmd_whoami, "repo": cmd_repo, "pr": cmd_pr, "issue": cmd_issue,
-                  "runs": cmd_runs, "mirror": cmd_mirror, "where": cmd_where}[a.cmd](a)
+        if a.cmd == "job" and a.action == "status" and not a.run_id:
+            raise ForgeError("job status needs a RUN_ID")
+        if a.cmd == "job":
+            result = {"setup": cmd_job_setup, "run": cmd_job_run, "status": cmd_job_status}[a.action](a)
+        else:
+            result = {"whoami": cmd_whoami, "repo": cmd_repo, "pr": cmd_pr, "issue": cmd_issue,
+                      "runs": cmd_runs, "mirror": cmd_mirror, "where": cmd_where, "runners": cmd_runners}[a.cmd](a)
+        if a.cmd == "job" and a.action != "setup" and result.get("status") in ("failure", "cancelled"):
+            print(json.dumps(result, indent=2))
+            return 1
     except ForgeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

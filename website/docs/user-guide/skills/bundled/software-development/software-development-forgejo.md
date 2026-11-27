@@ -16,7 +16,7 @@ Private Git on a self-hosted Forgejo or Gitea forge.
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/software-development/forgejo` |
-| Version | `1.0.0` |
+| Version | `1.1.0` |
 | Author | Wizard (Wizard815), Hermes Agent |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -32,8 +32,9 @@ The following is the complete skill definition that Hermes loads when this skill
 # Forgejo Skill
 
 Work with repos on the user's own Forgejo or Gitea forge: create private repos,
-push with the forge token, open and merge PRs, file issues, read CI runs, and
-set up mirrors to and from GitHub. GitHub work stays with the `github` skill;
+push with the forge token, open and merge PRs, file issues, read CI runs, run
+jobs on the forge's own runners (including GPU ones), and set up mirrors to
+and from GitHub. GitHub work stays with the `github` skill;
 this skill decides which one a repo belongs to.
 
 ## When to Use
@@ -42,6 +43,8 @@ this skill decides which one a repo belongs to.
 - The user asks for a private repo, or for work kept off GitHub.
 - Creating a new repo and `forgejo.default_home` is `forge`.
 - Mirroring a forge repo to GitHub, or a GitHub repo onto the forge.
+- Running a build, test or GPU job on the user's own machines instead of this
+  one: `job run --runner gpu` (or another label the forge's runners have).
 
 ## Prerequisites
 
@@ -79,6 +82,10 @@ the environment only. Never put the token on a command line or in a remote URL.
 | Mirror forge repo to GitHub | `mirror push OWNER/REPO --to https://github.com/OWNER/REPO` |
 | Copy a GitHub repo onto the forge | `mirror pull https://github.com/OWNER/REPO [--name N]` |
 | Show or run a repo's mirrors | `mirror list OWNER/REPO`, `mirror sync OWNER/REPO` |
+| Runner names and labels | `runners` (needs an admin token; else ask the user) |
+| Set up jobs (once) | `job setup --jobs-repo "{forgejo.jobs_repo}"` (blank: a private `YOU/hermes-jobs` repo with the job workflow) |
+| Run a command on a runner | `job run --jobs-repo "{forgejo.jobs_repo}" --runner LABEL [--image IMG] [--repo OWNER/REPO --ref REF] --wait -- COMMAND` |
+| Check a job later | `job status RUN_ID` |
 
 ## Procedure
 
@@ -98,7 +105,18 @@ the environment only. Never put the token on a command line or in a remote URL.
    or `failure`. Read failures on the run's `url`.
 6. **Merge** only when the user asked: `pr merge`, which re-reads the PR and
    fails unless it is really merged.
-7. **Events from the forge.** To have Hermes react to forge PRs or pushes, add a
+7. **Jobs on the user's runners.** `job setup` once, then
+   `job run --runner LABEL --repo OWNER/REPO --wait -- COMMAND`. The command
+   runs on a forge runner with that repo checked out, and `output` holds its
+   own lines. Pick the label by need: `ubuntu-latest` for normal builds and
+   tests, `gpu` (or whatever the user's GPU runner is labelled) for GPU work.
+   Pass `--image` to run in a specific container image. A job that stays
+   `waiting` means no idle runner has that label. GitHub-only repos run once
+   they are mirrored onto the forge: `mirror sync` first.
+8. **Pushed to GitHub, CI on the forge.** When a GitHub repo is pull-mirrored
+   onto the forge, run `mirror sync OWNER/REPO` after pushing so the forge's
+   runners see the commit now instead of at the next 8-hour sync.
+9. **Events from the forge.** To have Hermes react to forge PRs or pushes, add a
    webhook route with `signature: github` (Forgejo signs like GitHub) and
    `deliver: forge_comment` so the answer lands on the PR. See the webhooks
    guide, "Forgejo / Gitea Webhook Setup".
@@ -116,6 +134,13 @@ the environment only. Never put the token on a command line or in a remote URL.
   hosts use the machine's normal git login.
 - 404 right after a push is the forge catching up: `pr create` retries for a
   few seconds before giving up.
+- A pull-mirrored repo is read-only on the forge: push to its GitHub origin,
+  then `mirror sync`. To make the forge its home, the user converts it in the
+  forge's settings and adds a push mirror back to GitHub.
+- Jobs check out repos with the `JOBS_TOKEN` secret, which `job setup` sets
+  from `FORGE_JOBS_TOKEN` (a read-only token, best) or else `FORGE_TOKEN`.
+  Tell the user which one it used. Jobs run real code on the user's runner
+  machines: only run what the user asked for.
 
 ## Verification
 
@@ -125,3 +150,5 @@ the environment only. Never put the token on a command line or in a remote URL.
 - After `mirror push`: `mirror list` shows the GitHub address with no
   `last_error` once a push has gone through.
 - Never report CI or merge state from memory: read `runs` or `pr view` again.
+- After `job run --wait`: report `status` and `output`; on `failure`, the
+  output's last lines say why.

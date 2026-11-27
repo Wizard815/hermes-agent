@@ -21,6 +21,7 @@ TOKEN = "forgetoken0000000000000000000000000000ab"
 class FakeForge(BaseHTTPRequestHandler):
     calls: list = []
     pr_posts = 0
+    jobs_repo = False
 
     def log_message(self, *a):
         pass
@@ -64,6 +65,29 @@ class FakeForge(BaseHTTPRequestHandler):
             return self._send(200)
         if p == "/api/v1/repos/w/r/pulls/7":
             return self._send(200, {**pr, "merged": False})
+        if p == "/api/v1/repos/wizard/hermes-jobs" and method == "GET":
+            return self._send(200 if FakeForge.jobs_repo else 404, {"full_name": "wizard/hermes-jobs"})
+        if p == "/api/v1/user/repos" and method == "POST":
+            FakeForge.jobs_repo = True
+            return self._send(201, {"full_name": "wizard/hermes-jobs", "private": True})
+        if p == "/api/v1/repos/wizard/hermes-jobs/contents/.forgejo/workflows/hermes-job.yml":
+            return self._send(404 if method == "GET" else 201, {"message": "none"} if method == "GET" else {})
+        if p == "/api/v1/repos/wizard/hermes-jobs/actions/secrets/JOBS_TOKEN":
+            return self._send(201)
+        if p == "/api/v1/repos/wizard/hermes-jobs/actions/workflows/hermes-job.yml/dispatches":
+            return self._send(201, {"id": 41, "run_number": 3, "jobs": ["run", "run-in-image"]})
+        if p == "/api/v1/repos/wizard/hermes-jobs/actions/runs/41":
+            return self._send(200, {"status": "failure", "title": "t", "html_url": "http://forge/runs/3"})
+        if p == "/api/v1/repos/wizard/hermes-jobs/actions/runs/41/jobs":
+            return self._send(200, [{"id": 5, "name": "run", "status": "failure", "runs_on": ["gpu"]},
+                                    {"id": 6, "name": "run-in-image", "status": "skipped", "runs_on": ["gpu"]}])
+        if p == "/api/v1/repos/wizard/hermes-jobs/actions/jobs/5/logs":
+            raw = ("2026-11-27T15:49:52.5Z ⭐ Run Main actions/checkout@v4\n2026-11-27T15:49:53.2Z === hermes job output ===\n"
+                   f"2026-11-27T15:49:53.3Z rocm ok {TOKEN}\n2026-11-27T15:49:53.4Z ⭐ Run Post actions/checkout@v4\n").encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            return self.wfile.write(raw)
         return self._send(404, {"message": "not here"})
 
     def do_GET(self):
@@ -72,10 +96,13 @@ class FakeForge(BaseHTTPRequestHandler):
     def do_POST(self):
         self._handle("POST")
 
+    def do_PUT(self):
+        self._handle("PUT")
+
 
 @pytest.fixture
 def server(monkeypatch):
-    FakeForge.calls, FakeForge.pr_posts = [], 0
+    FakeForge.calls, FakeForge.pr_posts, FakeForge.jobs_repo = [], 0, False
     srv = HTTPServer(("127.0.0.1", 0), FakeForge)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     monkeypatch.setenv("FORGE_TOKEN", TOKEN)
@@ -159,3 +186,27 @@ def test_git_env_scopes_token_to_forge_address(monkeypatch):
     assert env["GIT_CONFIG_KEY_0"] == "http.http://192.168.20.5:3030/.extraheader"
     assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: token {TOKEN}"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_job_setup_makes_private_repo_workflow_and_secret(server, capsys):
+    code, out = run(server, "job", "setup", capsys=capsys)
+    assert code == 0 and json.loads(out.out)["workflow"] == "created"
+    posts = {c[1]: c[2] for c in FakeForge.calls if c[0] in ("POST", "PUT")}
+    assert posts["/api/v1/user/repos"]["private"] is True
+    assert b"workflow_dispatch" in forge.base64.b64decode(posts["/api/v1/repos/wizard/hermes-jobs/contents/.forgejo/workflows/hermes-job.yml"]["content"])
+    assert posts["/api/v1/repos/wizard/hermes-jobs/actions/secrets/JOBS_TOKEN"] == {"data": TOKEN}
+
+
+def test_job_run_dispatches_waits_and_shows_only_command_output(server, capsys):
+    code, out = run(server, "job", "run", "--runner", "gpu", "--repo", "w/r", "--wait", "--", "rocminfo", "|", "head", capsys=capsys)
+    assert code == 1  # the job failed
+    res = json.loads(out.out)
+    sent = next(c[2] for c in FakeForge.calls if c[1].endswith("/dispatches"))
+    assert sent["inputs"]["runner"] == "gpu" and sent["inputs"]["repo"] == "w/r" and sent["inputs"]["command"] == "rocminfo | head"
+    assert res["status"] == "failure" and res["jobs"] == [{"name": "run", "status": "failure", "runs_on": ["gpu"]}]
+    assert res["output"] == "rocm ok ****"   # no checkout noise, token masked
+
+
+def test_job_run_needs_a_command(server, capsys):
+    code, out = run(server, "job", "run", "--runner", "gpu", capsys=capsys)
+    assert code == 1 and "COMMAND" in out.err
