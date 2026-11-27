@@ -99,6 +99,10 @@ the environment only. Never put the token on a command line or in a remote URL.
    or `failure`. Read failures on the run's `url`.
 6. **Merge** only when the user asked: `pr merge`, which re-reads the PR and
    fails unless it is really merged.
+7. **Events from the forge.** To have Hermes react to forge PRs or pushes, add a
+   webhook route with `signature: github` (Forgejo signs like GitHub) and
+   `deliver: forge_comment` so the answer lands on the PR. See the webhooks
+   guide, "Forgejo / Gitea Webhook Setup".
 
 ## Pitfalls
 
