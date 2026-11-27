@@ -57,6 +57,8 @@ class FakeForge(BaseHTTPRequestHandler):
             if FakeForge.pr_posts == 2:
                 return self._send(201, pr)
             return self._send(409, {"message": "pull request already exists"})
+        if p == "/api/v1/repos/w/r" and method == "GET":
+            return self._send(200, {"full_name": "w/r", "default_branch": "trunk"})
         if p == "/api/v1/repos/w/r/pulls/main/feat":
             return self._send(200, pr)
         if p == "/api/v1/repos/w/r/push_mirrors":
@@ -73,7 +75,7 @@ class FakeForge(BaseHTTPRequestHandler):
         if p == "/api/v1/repos/wizard/hermes-jobs/contents/.forgejo/workflows/hermes-job.yml":
             return self._send(404 if method == "GET" else 201, {"message": "none"} if method == "GET" else {})
         if p == "/api/v1/repos/wizard/hermes-jobs/actions/secrets/JOBS_TOKEN":
-            return self._send(201)
+            return self._send(404 if method == "DELETE" else 201, {"message": "none"} if method == "DELETE" else None)
         if p == "/api/v1/repos/wizard/hermes-jobs/actions/workflows/hermes-job.yml/dispatches":
             return self._send(201, {"id": 41, "run_number": 3, "jobs": ["run", "run-in-image"]})
         if p == "/api/v1/repos/wizard/hermes-jobs/actions/runs/41":
@@ -98,6 +100,9 @@ class FakeForge(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self._handle("PUT")
+
+    def do_DELETE(self):
+        self._handle("DELETE")
 
 
 @pytest.fixture
@@ -188,13 +193,26 @@ def test_git_env_scopes_token_to_forge_address(monkeypatch):
     assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
-def test_job_setup_makes_private_repo_workflow_and_secret(server, capsys):
+def test_job_setup_makes_private_repo_workflow_and_secret(server, monkeypatch, capsys):
+    monkeypatch.delenv("FORGE_JOBS_TOKEN", raising=False)
     code, out = run(server, "job", "setup", capsys=capsys)
-    assert code == 0 and json.loads(out.out)["workflow"] == "created"
+    res = json.loads(out.out)
+    assert code == 0 and res["workflow"] == "created" and res["checkout_token"].startswith("the run's own token")
     posts = {c[1]: c[2] for c in FakeForge.calls if c[0] in ("POST", "PUT")}
     assert posts["/api/v1/user/repos"]["private"] is True
     assert b"workflow_dispatch" in forge.base64.b64decode(posts["/api/v1/repos/wizard/hermes-jobs/contents/.forgejo/workflows/hermes-job.yml"]["content"])
-    assert posts["/api/v1/repos/wizard/hermes-jobs/actions/secrets/JOBS_TOKEN"] == {"data": TOKEN}
+    # FORGE_TOKEN can write every repo: it never becomes the jobs' secret, and an old copy is deleted
+    secret = "/api/v1/repos/wizard/hermes-jobs/actions/secrets/JOBS_TOKEN"
+    assert secret not in posts and ("DELETE", secret) in [(c[0], c[1]) for c in FakeForge.calls]
+    monkeypatch.setenv("FORGE_JOBS_TOKEN", "readonly")
+    run(server, "job", "setup", capsys=capsys)
+    assert FakeForge.calls[-1][:3] == ("PUT", secret, {"data": "readonly"})
+
+
+def test_job_checkout_leaves_no_token_for_the_command():
+    wf = forge.TEMPLATE.read_text() if hasattr(forge.TEMPLATE, "read_text") else open(forge.TEMPLATE).read()
+    assert wf.count("uses: actions/checkout@v4") == wf.count("persist-credentials: false") == 2
+    assert wf.count("${{ secrets.JOBS_TOKEN || github.token }}") == 2
 
 
 def test_job_run_dispatches_waits_and_shows_only_command_output(server, capsys):
@@ -202,7 +220,7 @@ def test_job_run_dispatches_waits_and_shows_only_command_output(server, capsys):
     assert code == 1  # the job failed
     res = json.loads(out.out)
     sent = next(c[2] for c in FakeForge.calls if c[1].endswith("/dispatches"))
-    assert sent["inputs"]["runner"] == "gpu" and sent["inputs"]["repo"] == "w/r" and sent["inputs"]["command"] == "rocminfo | head"
+    assert sent["inputs"]["runner"] == "gpu" and sent["inputs"]["repo"] == "w/r" and sent["inputs"]["ref"] == "trunk" and sent["inputs"]["command"] == "rocminfo | head"
     assert res["status"] == "failure" and res["jobs"] == [{"name": "run", "status": "failure", "runs_on": ["gpu"]}]
     assert res["output"] == "rocm ok ****"   # no checkout noise, token masked
 
@@ -210,3 +228,19 @@ def test_job_run_dispatches_waits_and_shows_only_command_output(server, capsys):
 def test_job_run_needs_a_command(server, capsys):
     code, out = run(server, "job", "run", "--runner", "gpu", capsys=capsys)
     assert code == 1 and "COMMAND" in out.err
+
+
+def test_job_output_stops_at_runner_lines_and_keeps_the_exit_code():
+    log = ("2026-11-27T10:00:00.1Z setup\n2026-11-27T10:00:01.2Z === hermes job output ===\n"
+           "2026-11-27T10:00:02.3Z out\n2026-11-27T10:00:02.4Z ⚙️ [runner]: exitcode '5': failure\n"
+           "2026-11-27T10:00:02.5Z skipping post step for 'actions/checkout@v4'; main step was skipped\n")
+    assert forge.job_output(log, 50) == "out"
+    assert forge._EXIT.search(log).group(1) == "5"
+    # no marker (the image could not be pulled): the log's tail, which says why
+    assert forge.job_output("a\nError response from daemon: pull failed\n", 1) == "Error response from daemon: pull failed"
+
+
+def test_job_run_refuses_a_label_no_runner_has(server, monkeypatch, capsys):
+    monkeypatch.setattr(forge, "runner_labels", lambda a: {"ubuntu-latest", "gpu"})
+    code, out = run(server, "job", "run", "--runner", "gpu2", "--", "echo", "hi", capsys=capsys)
+    assert code == 1 and "no runner has the label 'gpu2'" in out.err

@@ -90,7 +90,8 @@ the environment only. Never put the token on a command line or in a remote URL.
 | Runner names and labels | `runners` (needs an admin token; else ask the user) |
 | Set up jobs (once) | `job setup --jobs-repo "{forgejo.jobs_repo}"` (blank: a private `YOU/hermes-jobs` repo with the job workflow) |
 | Run a command on a runner | `job run --jobs-repo "{forgejo.jobs_repo}" --runner LABEL [--image IMG] [--repo OWNER/REPO --ref REF] --wait -- COMMAND` |
-| Check a job later | `job status RUN_ID` |
+| Check a job later | `job status RUN_ID` (`exit_code` on failure) |
+| Stop a job | `job cancel RUN_ID` |
 
 ## Procedure
 
@@ -145,9 +146,11 @@ the environment only. Never put the token on a command line or in a remote URL.
   then `mirror sync`. To make the forge its home, the user converts it in the
   forge's settings and adds a push mirror back to GitHub.
 - Jobs check out repos with the `JOBS_TOKEN` secret, which `job setup` sets
-  from `FORGE_JOBS_TOKEN` (a read-only token, best) or else `FORGE_TOKEN`.
-  Tell the user which one it used. Jobs run real code on the user's runner
-  machines: only run what the user asked for.
+  from `FORGE_JOBS_TOKEN` (a read-only `read:repository` token). It never uses
+  `FORGE_TOKEN`, which can write every repo. Without `FORGE_JOBS_TOKEN` a job
+  can check out only public repos. The checkout does not leave the token where
+  the command can read it. Jobs run real code on the user's runner machines:
+  only run what the user asked for.
 
 ## Verification
 
