@@ -24,6 +24,7 @@ starting that workflow, the body below only routes.
 
 | Task | Read first |
 |---|---|
+| Repo's `origin` is on the user's own Forgejo/Gitea, or the work must stay private | the `forgejo` skill |
 | Auth broken / new machine / token or SSH setup / gh login | `references/auth.md` |
 | Create, triage, label, assign, close issues | `references/issues.md` |
 | Branch, commit, open PR, watch CI, merge | `references/pr-workflow.md` |
