@@ -37,6 +37,16 @@ OPENAI_API_KEY=sk-your-argos-key
 # OPENROUTER_API_KEY=
 ```
 
+Browser tasks (`browser_task`, browser-use) can use an Argos model too. Install
+browser-use first (see the Browser docs, "Browser tasks"), then:
+
+```yaml
+browser:
+  task:
+    model: gemma-4-31b                      # an Argos model; Gemma 4 31B passed our checks
+    base_url: "http://192.168.20.5:8080/v1"
+```
+
 ## Check it
 
 ```bash

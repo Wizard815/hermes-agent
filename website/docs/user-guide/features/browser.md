@@ -19,6 +19,7 @@ browser over the Chrome DevTools Protocol (CDP) — with three companion tools
 | `browser_cdp` | Send one raw CDP command (cookies, network control, iframe-scoped evaluation, anything the helpers don't cover). |
 | `browser_dialog` | Accept or dismiss a native JavaScript dialog (`alert` / `confirm` / `prompt` / `beforeunload`) blocking the page. |
 | `browser_vault` | Fill saved logins, cards, addresses and 2FA codes into the current page without the secrets entering the conversation. |
+| `browser_task` | Hand a whole job to [browser-use](#browser-tasks-browser-use)'s own agent, with its own model, in the same browser. Only when browser-use is installed. |
 
 Where the browser comes from is a separate choice:
 
@@ -539,6 +540,53 @@ browser and the dock's **Browser** icon are the same headed Chromium with one
 persistent profile per bot, so you can take over, sign in to a site, and hand
 the session back to the agent. See that page for the profile location and how
 `browser.executable_path` / `browser.user_data_dir` apply there.
+
+## Browser tasks (browser-use)
+
+`browser_task` gives a whole browser job to [browser-use](https://github.com/browser-use/browser-use)
+1.0.4: its own agent loop, with its own model, in the **same browser** `browser_exec` uses (same tabs,
+same logins). The main model says the goal in one call ("on example.com, find X and report Y"); browser-use
+does the clicking and returns the answer, whether it succeeded, and the steps it took. The page it ends on
+stays open, so `browser_exec` can carry on there. Use it to let a cheap or local model do long web chores
+while the main model plans.
+
+Install browser-use in a venv of its own (its pinned dependencies stay out of Hermes's environment):
+
+```bash
+uv venv ~/.hermes/browser-use
+VIRTUAL_ENV=~/.hermes/browser-use uv pip install browser-use==1.0.4
+```
+
+Hermes finds it at `<HERMES_HOME>/browser-use`, `/opt/browser-use`, or the Python named in
+`browser.task.python`. Without one, `browser_task` is not offered.
+
+Pick its model under `browser.task` (any OpenAI-compatible endpoint):
+
+```yaml
+browser:
+  task:
+    model: gemma-4-31b                      # an Argos model name (llama.cpp)
+    base_url: http://192.168.20.5:8080/v1   # Argos; or https://openrouter.ai/api/v1
+    api_key_env: OPENAI_API_KEY             # optional; OPENROUTER_API_KEY for openrouter.ai
+    max_steps: 25                           # optional
+    vision: true                            # optional; false for text-only models
+    python: /opt/browser-use/bin/python     # optional
+```
+
+Unset, it uses the main model's endpoint (`model.base_url` and `model.default`, or OpenRouter when
+`model.provider` is `openrouter`).
+
+What goes wrong:
+
+- **"needs a browser it can reach over CDP":** `browser_task` drives local Chromium, `/browser connect`
+  and CDP cloud providers. Browser Use Cloud direct-API configs (only `BROWSER_USE_API_KEY`) are not
+  supported; use `browser_exec` there.
+- **It gives up or answers with code:** the model is too small. Gemma 4 31B and Claude Haiku 5.5 passed
+  our checks; models under about 30B often stop early.
+- **Not a sandbox:** browser-use runs the Python its model writes, on this machine, in a browser that may
+  be signed in. So `browser_task` is offered only to sessions that also have `terminal`, like
+  `browser_exec`. The task is told never to buy, post, send or delete unless the task says so.
+- browser-use's telemetry and update check are off.
 
 ## Companion tools
 

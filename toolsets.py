@@ -15,6 +15,7 @@ _HERMES_CORE_TOOLS = [
     "vision_analyze", "image_generate",
     "skills_list", "skill_view", "skill_manage",
     "browser_exec",  # THE browser: Python over CDP (browser-harness)
+    "browser_task",  # a whole job to browser-use's own agent, same browser (gated on its venv)
     "browser_cdp", "browser_dialog",
     "browser_vault",  # rides with the browser; deferred by default (tools.tool_search.defer)
     "text_to_speech",

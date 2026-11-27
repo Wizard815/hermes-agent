@@ -75,6 +75,9 @@ kanban, memory, messaging, moa, rl, safe, search, session_search, skills, termin
 tts, video, vision, web` (don't assert the list in tests). Per-platform enable/disable via
 `hermes tools` (curses) or `tools.<platform>.enabled/disabled` in config.yaml. `browser_exec` is the
 one core browser tool (beside `browser_cdp` / `browser_dialog` / `browser_vault`, all CDP).
+`browser_task` (`browser_task_tool.py`) hands a whole job to browser-use's own agent on the browser
+`browser_exec` resolves; browser-use lives in its own venv and runs as a subprocess
+(`browser_task/runner.py`), offered only when that venv exists and gated on `terminal` like `browser_exec`.
 
 ## Browser runtime
 

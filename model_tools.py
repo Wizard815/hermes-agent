@@ -492,6 +492,8 @@ _DYNAMIC_SCHEMA_REWRITERS = {
     "discord_admin": _discord_rewriter("get_dynamic_schema_admin"),
     "browser_cdp": _rewrite_browser_cdp,
     "browser_exec": _compose_rewriters(_rewrite_browser_exec, _rewrite_browser_exec_vision, _rewrite_input_tool_for_vault),
+    # browser-use runs the Python its model writes on this host: the same terminal gate as browser_exec.
+    "browser_task": _rewrite_browser_exec,
     "browser_vault": _rewrite_browser_vault,
     "drive_preview": _rewrite_input_tool_for_vault,
     "delegate_task": _rewrite_delegate_task,
