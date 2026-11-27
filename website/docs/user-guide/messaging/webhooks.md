@@ -87,7 +87,7 @@ Routes define how different webhook sources are handled. Each route is a named e
 | `script` | No | Filter/transform script under `~/.hermes/scripts/`. The webhook payload is passed as JSON on stdin. JSON object stdout replaces the payload before templating; text stdout is exposed as `script_output`; empty stdout, `[SILENT]`, or a nonzero exit code ignores the webhook. |
 | `skills` | No | List of skill names to load for the agent run. |
 | `toolsets` | No | List of toolset keys (e.g. `["terminal", "file", "web"]`) that **replaces** the platform-level webhook toolset for runs triggered by this route only. Manual config edit only — not settable via `hermes webhook subscribe`, so agent-created subscriptions cannot self-grant elevated tools. Names are validated the same way as `platform_toolsets` entries (unknown or platform-restricted names are dropped). See [Per-route toolsets](#per-route-toolsets). |
-| `deliver` | No | Where to send the response: `github_comment`, `telegram`, `discord`, `slack`, `signal`, `sms`, `whatsapp`, `matrix`, `mattermost`, `homeassistant` (plugin), `email`, `dingtalk`, `feishu`, `wecom`, `weixin`, `bluebubbles`, `qqbot`, or `log` (default). |
+| `deliver` | No | Where to send the response: `github_comment`, `forge_comment`, `telegram`, `discord`, `slack`, `signal`, `sms`, `whatsapp`, `matrix`, `mattermost`, `homeassistant` (plugin), `email`, `dingtalk`, `feishu`, `wecom`, `weixin`, `bluebubbles`, `qqbot`, or `log` (default). |
 | `deliver_extra` | No | Additional delivery config — keys depend on `deliver` type (e.g. `repo`, `pr_number`, `chat_id`). Values support the same `{dot.notation}` templates as `prompt`. |
 | `deliver_only` | No | If `true`, skip the agent entirely — the rendered `prompt` template becomes the literal message that gets delivered. Zero LLM cost, sub-second delivery. See [Direct Delivery Mode](#direct-delivery-mode) for use cases. Requires `deliver` to be a real target (not `log`). |
 | `cron_job` | No | Fire an existing cron job (by ID or name) on each event instead of starting a fresh webhook agent session. The rendered `prompt` becomes transient per-run context; the job's own prompt, skills, model, and delivery settings apply. Mutually exclusive with `deliver_only`. See [Event-Triggered Cron Jobs](#event-triggered-cron-jobs). |
@@ -302,6 +302,33 @@ Open a pull request on the repository. The webhook fires, Hermes processes the e
 
 ---
 
+## Forgejo / Gitea Webhook Setup {#forgejo-webhook-setup}
+
+Forgejo and Gitea sign deliveries the same way GitHub does (`X-Hub-Signature-256`) and send `X-GitHub-Event`, so a route pinned to `signature: github` takes them as they are. The payloads have GitHub's shape too (`repository.full_name`, `number`, `pull_request.title`).
+
+1. In the forge: repo (or org) > **Settings > Webhooks > Add webhook > Forgejo**. Target URL `http://<hermes-host>:8644/webhooks/forge-pr`, content type `application/json`, a secret, and the events you want (Pull request, Issue comment, Push).
+2. Route, with replies posted back on the forge:
+
+```yaml
+        forge-pr:
+          events: ["pull_request"]
+          secret: "forge-webhook-secret"
+          signature: github
+          prompt: |
+            Review this pull request on the home forge:
+            {repository.full_name} PR #{number}: {pull_request.title} ({action})
+            URL: {pull_request.html_url}
+          skills: ["forgejo"]
+          deliver: "forge_comment"
+          deliver_extra:
+            repo: "{repository.full_name}"
+            pr_number: "{number}"
+```
+
+3. `FORGE_TOKEN` in `~/.hermes/.env` and the forge address in `skills.config.forgejo.url` (or `FORGE_URL`).
+
+What goes wrong: the forge refuses to deliver to a LAN address unless `[webhook] ALLOWED_HOST_LIST` allows it (the homelab compose sets `private,external`); a 401 on the reply means `FORGE_TOKEN` is wrong or lacks `write:issue`.
+
 ## GitLab Webhook Setup {#gitlab-webhook-setup}
 
 GitLab webhooks work similarly but use a different authentication mechanism. GitLab sends the secret as a plain `X-Gitlab-Token` header (exact string match, not HMAC).
@@ -346,6 +373,7 @@ The `deliver` field controls where the agent's response goes after processing th
 |-------------|-------------|
 | `log` | Logs the response to the gateway log output. This is the default and is useful for testing. |
 | `github_comment` | Posts the response as a PR/issue comment via the `gh` CLI. Requires `deliver_extra.repo` and `deliver_extra.pr_number`. The `gh` CLI must be installed and authenticated on the gateway host (`gh auth login`). |
+| `forge_comment` | Posts the response as a PR/issue comment on your Forgejo or Gitea through its API. Requires `deliver_extra.repo` and `deliver_extra.pr_number`. The forge address comes from `FORGE_URL` or `skills.config.forgejo.url` (never from the payload) and the token from `FORGE_TOKEN` (needs `write:issue`). |
 | `telegram` | Routes the response to Telegram. Uses the home channel, or specify `chat_id` in `deliver_extra`. |
 | `discord` | Routes the response to Discord. Uses the home channel, or specify `chat_id` in `deliver_extra`. |
 | `slack` | Routes the response to Slack. Uses the home channel, or specify `chat_id` in `deliver_extra`. |

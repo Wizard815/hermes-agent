@@ -1,6 +1,6 @@
 """Generic webhook platform adapter: aiohttp server that validates HMAC-signed POSTs (GitHub, GitLab,
-Svix, Linear, generic), renders payloads into agent prompts, and routes responses back (github_comment
-or any gateway platform). Routes live under platforms.webhook.extra.routes: events (header filter),
+Svix, Linear, generic; Forgejo/Gitea send GitHub's headers too), renders payloads into agent prompts, and
+routes responses back (github_comment, forge_comment or any gateway platform). Routes live under platforms.webhook.extra.routes: events (header filter),
 secret (REQUIRED; "INSECURE_NO_AUTH" skips validation, loopback only), prompt template, skills,
 deliver/deliver_extra, deliver_only (rendered prompt IS the message), cron_job (fire an existing cron
 job per event; the rendered prompt is transient per-run context; exclusive with deliver_only), mirror_to_session
@@ -273,7 +273,7 @@ class WebhookAdapter(BasePlatformAdapter):
             deliver = route.get("deliver", "log")
             if not deliver or deliver == "log":
                 raise ValueError(f"[webhook] Route '{name}' has deliver_only=true but deliver is '{deliver}'. Direct "
-                                 f"delivery requires a real target (telegram, discord, slack, github_comment, etc.).")
+                                 f"delivery requires a real target (telegram, discord, slack, github_comment, forge_comment, etc.).")
             if route.get("cron_job"):
                 raise ValueError(f"[webhook] Route '{name}' sets both deliver_only and cron_job. They are mutually "
                                  f"exclusive: deliver_only pushes the rendered template as a message, cron_job fires "
@@ -345,6 +345,8 @@ class WebhookAdapter(BasePlatformAdapter):
             return SendResult(success=True)
         if deliver_type == "github_comment":
             return await self._deliver_github_comment(content, delivery)
+        if deliver_type == "forge_comment":
+            return await self._deliver_forge_comment(content, delivery)
         if self.gateway_runner and _is_known_platform(deliver_type):
             return await self._deliver_cross_platform(deliver_type, content, delivery)
         logger.warning("[webhook] Unknown deliver type: %s", deliver_type)
@@ -980,6 +982,8 @@ class WebhookAdapter(BasePlatformAdapter):
             return SendResult(success=True)
         if deliver_type == "github_comment":
             return await self._deliver_github_comment(content, delivery)
+        if deliver_type == "forge_comment":
+            return await self._deliver_forge_comment(content, delivery)
         return await self._deliver_cross_platform(deliver_type, content, delivery)
 
     async def _deliver_github_comment(self, content: str, delivery: dict) -> SendResult:
@@ -1020,6 +1024,71 @@ class WebhookAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.error("[webhook] github_comment delivery error: %s", e)
             return SendResult(success=False, error=str(e))
+
+    def _forge_target(self, profile: Optional[str]) -> tuple[str, str]:
+        """(address, token) of the routed profile's Forgejo/Gitea. The address comes from config only
+        (``FORGE_URL``, else ``skills.config.forgejo.url``), never from the payload, so a delivery can't
+        send ``FORGE_TOKEN`` anywhere else."""
+        from agent.secret_scope import get_secret
+        with self._profile_scope(profile):
+            url = (get_secret("FORGE_URL") or "").strip()
+            if not url:
+                with suppress(Exception):
+                    from hermes_cli.config import load_config_readonly
+                    forgejo = (((load_config_readonly().get("skills") or {}).get("config") or {}).get("forgejo") or {})
+                    url = str(forgejo.get("url") or "").strip() if isinstance(forgejo, dict) else ""
+            token = (get_secret("FORGE_TOKEN") or "").strip()
+        return url.rstrip("/"), token
+
+    async def _deliver_forge_comment(self, content: str, delivery: dict) -> SendResult:
+        """Post agent response as a comment on a Forgejo/Gitea PR or issue through the forge's API."""
+        extra = delivery.get("deliver_extra", {})
+        repo, number = extra.get("repo", ""), extra.get("pr_number", "")
+        if not repo or not number:
+            logger.error("[webhook] forge_comment delivery missing repo or pr_number")
+            return SendResult(success=False, error="Missing repo or pr_number")
+        try:
+            num = int(number)
+            if num <= 0:
+                raise ValueError("non-positive")
+        except (ValueError, TypeError):
+            logger.error("[webhook] invalid pr_number: %r", number)
+            return SendResult(success=False, error="Invalid pr_number")
+        if not _REPO_RE.fullmatch(repo) or repo.split("/")[0] in {".", ".."} or repo.split("/")[1] in {".", ".."}:
+            logger.error("[webhook] invalid repo format: %r", repo)
+            return SendResult(success=False, error="Invalid repo format")
+        url, token = self._forge_target(delivery.get("profile"))
+        if not re.match(r"^https?://[^/\s]+", url):
+            return SendResult(success=False, error="No forge address: set skills.config.forgejo.url or FORGE_URL")
+        if not token:
+            return SendResult(success=False, error="FORGE_TOKEN is not set for this profile")
+        owner, name = repo.split("/")
+        endpoint = f"{url}/api/v1/repos/{owner}/{name}/issues/{num}/comments"
+
+        def _post() -> tuple[int, str]:
+            import urllib.error
+            import urllib.request
+            req = urllib.request.Request(endpoint, data=json.dumps({"body": content}).encode(), method="POST",
+                                         headers={"Authorization": f"token {token}", "Content-Type": "application/json",
+                                                  "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:  # address from config only
+                    return resp.status, ""
+            except urllib.error.HTTPError as e:
+                return e.code, (e.read() or b"")[:300].decode("utf-8", "replace")
+
+        try:
+            status, detail = await asyncio.to_thread(_post)  # off-loop, like github_comment
+        except Exception as e:
+            logger.error("[webhook] forge_comment delivery error: %s", str(e).replace(token, "***"))
+            return SendResult(success=False, error=f"The forge at {url} isn't answering")
+        if status in (200, 201):
+            logger.info("[webhook] Posted forge comment on %s#%s", repo, num)
+            return SendResult(success=True)
+        reason = {401: "the forge refused FORGE_TOKEN", 403: "FORGE_TOKEN can't comment there (needs write:issue)",
+                  404: "no such repo, PR or issue on the forge"}.get(status, f"the forge answered {status}")
+        logger.error("[webhook] forge_comment failed on %s#%s: %s %s", repo, num, reason, detail)
+        return SendResult(success=False, error=reason)
 
     def _github_env(self, profile: Optional[str]) -> Optional[dict]:
         """``gh`` environment for a delivery: a routed profile authenticates with ITS ``GH_TOKEN`` /

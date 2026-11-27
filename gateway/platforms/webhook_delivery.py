@@ -31,7 +31,7 @@ def validate_destination(delivery):
     target, extra = delivery['deliver'], delivery['deliver_extra']
     if not isinstance(target, str) or not isinstance(extra, dict):
         raise RuntimeStoreError('invalid_params')
-    if target == 'github_comment':
+    if target in ('github_comment', 'forge_comment'):
         repo, number = extra.get('repo'), extra.get('pr_number')
         if not isinstance(repo, str) or not _REPO_RE.fullmatch(repo) or not str(number).isdigit() or int(number) <= 0:
             raise RuntimeStoreError('invalid_params')
@@ -39,7 +39,7 @@ def validate_destination(delivery):
         raise RuntimeStoreError('invalid_params')
     # Configuration extras may contain credentials or whole rendered payloads.
     # Persist only fields the selected sender actually consumes.
-    fields = {'log': (), 'github_comment': ('repo', 'pr_number')}.get(
+    fields = {'log': (), 'github_comment': ('repo', 'pr_number'), 'forge_comment': ('repo', 'pr_number')}.get(
         target, ('chat_id', 'message_thread_id', 'thread_id'))
     result = {'deliver': target, 'deliver_extra': deepcopy({key: extra[key] for key in fields if key in extra})}
     # Omit the unbound defaults to preserve pre-profile receipt fingerprints.
@@ -58,7 +58,7 @@ def snapshot_destination(adapter, delivery):
     from gateway.config import Platform
 
     result = validate_destination(delivery)
-    if result['deliver'] not in {'log', 'github_comment'} and not result['deliver_extra'].get('chat_id'):
+    if result['deliver'] not in {'log', 'github_comment', 'forge_comment'} and not result['deliver_extra'].get('chat_id'):
         profile = result.get('profile')
         with adapter._profile_scope(profile):
             home = adapter._delivery_config(profile).get_home_channel(Platform(result['deliver']))

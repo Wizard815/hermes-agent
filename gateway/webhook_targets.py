@@ -7,7 +7,7 @@ BUILTIN_DELIVER_PLATFORMS = frozenset({
     "telegram", "discord", "slack", "signal", "sms", "whatsapp", "matrix", "mattermost",
     "email", "dingtalk", "feishu", "wecom", "wecom_callback", "weixin",
     "bluebubbles", "qqbot"})
-_NON_PLATFORM_TARGETS = frozenset({"log", "github_comment"})
+_NON_PLATFORM_TARGETS = frozenset({"log", "github_comment", "forge_comment"})
 
 
 def is_known_platform(name: str) -> bool:
